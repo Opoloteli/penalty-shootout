@@ -6,7 +6,7 @@ const scoreboard = document.getElementById("scoreboard");
 // Goal dimensions
 const goal = { x: 150, y: 60, width: 300, height: 130 };
 
-// Ball start position (the penalty spot)
+// Ball
 const START = { x: 300, y: 330, radius: 14 };
 const ball = { x: START.x, y: START.y, radius: START.radius };
 
@@ -17,23 +17,29 @@ const KEEPER_START = {
 };
 const keeper = { x: KEEPER_START.x, y: KEEPER_START.y, angle: 0 };
 let keeperZone = null;
-let keeperTarget = null;
 
-// Game state
-let state = "aiming";
+// Shot
 let target = null;
 let progress = 0;
 const SHOT_SPEED = 0.03;
 
-// Score and result
-const score = { goals: 0, saves: 0, shots: 0 };
-let result = null; // "GOAL!" or "SAVED!" shown on the canvas
+// Match state
+// state: "aiming" | "defending" | "shooting" | "result" | "gameover"
+let state = "aiming";
+let turn = "player";            // whose penalty it is: "player" or "cpu"
+let round = 1;
+const ROUNDS = 5;
+let score = { player: 0, cpu: 0 };
+let result = null;              // "GOAL!" or "SAVED!"
+let resultGood = true;          // true if the result is good for the player
+let winner = null;
 
 // ---------- Drawing ----------
 
 function updateScoreboard() {
+  const roundText = round <= ROUNDS ? `Round ${round} of ${ROUNDS}` : "Sudden death";
   scoreboard.textContent =
-    `Goals: ${score.goals} | Saves: ${score.saves} | Shots: ${score.shots}`;
+    `You ${score.player} - ${score.cpu} Computer  |  ${roundText}`;
 }
 
 function drawKeeper() {
@@ -60,8 +66,26 @@ function drawResult() {
   ctx.lineWidth = 8;
   ctx.strokeStyle = "black";
   ctx.strokeText(result, canvas.width / 2, 250);
-  ctx.fillStyle = result === "GOAL!" ? "#00e676" : "#ff5252";
+  ctx.fillStyle = resultGood ? "#00e676" : "#ff5252";
   ctx.fillText(result, canvas.width / 2, 250);
+}
+
+function drawGameOver() {
+  if (state !== "gameover") return;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = winner === "player" ? "#00e676" : "#ff5252";
+  ctx.font = "bold 52px Arial";
+  ctx.fillText(winner === "player" ? "YOU WIN! 🏆" : "YOU LOSE 😞", canvas.width / 2, 160);
+
+  ctx.fillStyle = "white";
+  ctx.font = "bold 36px Arial";
+  ctx.fillText(`${score.player} - ${score.cpu}`, canvas.width / 2, 215);
+
+  ctx.font = "22px Arial";
+  ctx.fillText("Click to play again", canvas.width / 2, 275);
 }
 
 function drawScene() {
@@ -82,8 +106,8 @@ function drawScene() {
 
   drawKeeper();
 
-  // Target marker
-  if (target) {
+  // Target marker (only when the player is aiming)
+  if (target && turn === "player") {
     ctx.strokeStyle = "red";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -105,33 +129,70 @@ function drawScene() {
   ctx.stroke();
 
   drawResult();
+  drawGameOver();
 }
 
 // ---------- Zones ----------
 
+const COLUMNS = ["left", "centre", "right"];
+const ROWS = ["high", "low"];
+
 function getZone(x, y) {
   const col = Math.floor(((x - goal.x) / goal.width) * 3);
   const row = Math.floor(((y - goal.y) / goal.height) * 2);
-  // Math.min stops a click on the very edge from going out of range
-  const horizontal = ["left", "centre", "right"][Math.min(col, 2)];
-  const vertical = ["high", "low"][Math.min(row, 1)];
-  return { horizontal, vertical };
+  return {
+    horizontal: COLUMNS[Math.min(col, 2)],
+    vertical: ROWS[Math.min(row, 1)],
+  };
 }
 
-function pickKeeperZone() {
-  const horizontal = ["left", "centre", "right"][Math.floor(Math.random() * 3)];
-  const vertical = ["high", "low"][Math.floor(Math.random() * 2)];
-
-  const colIndex = ["left", "centre", "right"].indexOf(horizontal);
-  const rowIndex = ["high", "low"].indexOf(vertical);
-
-  const x = goal.x + goal.width * (colIndex + 0.5) / 3;
-  const y = goal.y + goal.height * (rowIndex + 0.5) / 2;
-
-  return { horizontal, vertical, x, y };
+// Build a zone object (including its centre point) from a zone's names
+function makeZone(horizontal, vertical) {
+  const col = COLUMNS.indexOf(horizontal);
+  const row = ROWS.indexOf(vertical);
+  return {
+    horizontal,
+    vertical,
+    x: goal.x + goal.width * (col + 0.5) / 3,
+    y: goal.y + goal.height * (row + 0.5) / 2,
+  };
 }
 
-// ---------- Shot outcome ----------
+function randomZone() {
+  return makeZone(
+    COLUMNS[Math.floor(Math.random() * 3)],
+    ROWS[Math.floor(Math.random() * 2)]
+  );
+}
+
+// A random point inside the goal (used for the computer's shots)
+function randomGoalPoint() {
+  const margin = 15;
+  return {
+    x: goal.x + margin + Math.random() * (goal.width - margin * 2),
+    y: goal.y + margin + Math.random() * (goal.height - margin * 2),
+  };
+}
+
+// ---------- Turn flow ----------
+
+function startTurn() {
+  if (turn === "player") {
+    state = "aiming";
+    message.textContent = "Your penalty! Click inside the goal to shoot";
+  } else {
+    state = "defending";
+    message.textContent = "Computer shoots! Click a zone to dive that way";
+  }
+  updateScoreboard();
+  drawScene();
+}
+
+function launchShot() {
+  state = "shooting";
+  message.textContent = turn === "player" ? "Shooting..." : "Here it comes...";
+  requestAnimationFrame(animate);
+}
 
 function resolveShot() {
   const shot = getZone(target.x, target.y);
@@ -139,23 +200,69 @@ function resolveShot() {
     shot.horizontal === keeperZone.horizontal &&
     shot.vertical === keeperZone.vertical;
 
-  score.shots++;
-  if (saved) {
-    score.saves++;
-    result = "SAVED!";
-  } else {
-    score.goals++;
-    result = "GOAL!";
-  }
+  if (!saved) score[turn]++;
+
+  result = saved ? "SAVED!" : "GOAL!";
+  // Good for the player if they scored, or if they saved the computer's shot
+  resultGood = turn === "player" ? !saved : saved;
+
+  const who = turn === "player" ? "You" : "Computer";
+  const keeperWho = turn === "player" ? "Computer keeper" : "Your keeper";
+  message.textContent =
+    `${who} shot ${shot.vertical} ${shot.horizontal}. ` +
+    `${keeperWho} dived ${keeperZone.vertical} ${keeperZone.horizontal}.`;
 
   updateScoreboard();
   drawScene();
+  setTimeout(nextTurn, 2000);
+}
 
-  message.textContent =
-    `You shot ${shot.vertical} ${shot.horizontal}. ` +
-    `Keeper dived ${keeperZone.vertical} ${keeperZone.horizontal}.`;
+function nextTurn() {
+  resetPositions();
 
-  setTimeout(resetShot, 2000);
+  if (turn === "player") {
+    turn = "cpu";
+  } else {
+    // Both teams have taken a penalty: round complete
+    if (round >= ROUNDS && score.player !== score.cpu) {
+      endGame();
+      return;
+    }
+    round++;
+    turn = "player";
+  }
+  startTurn();
+}
+
+function endGame() {
+  winner = score.player > score.cpu ? "player" : "cpu";
+  state = "gameover";
+  message.textContent = "Full time!";
+  drawScene();
+}
+
+function restartGame() {
+  score = { player: 0, cpu: 0 };
+  round = 1;
+  turn = "player";
+  winner = null;
+  resetPositions();
+  startTurn();
+}
+
+function resetPositions() {
+  ball.x = START.x;
+  ball.y = START.y;
+  ball.radius = START.radius;
+
+  keeper.x = KEEPER_START.x;
+  keeper.y = KEEPER_START.y;
+  keeper.angle = 0;
+
+  keeperZone = null;
+  target = null;
+  result = null;
+  progress = 0;
 }
 
 // ---------- Animation ----------
@@ -173,8 +280,8 @@ function animate() {
 
   // Keeper dive
   const kp = Math.min(1, progress * 1.3);
-  keeper.x = KEEPER_START.x + (keeperTarget.x - KEEPER_START.x) * kp;
-  keeper.y = KEEPER_START.y + (keeperTarget.y - KEEPER_START.y) * kp;
+  keeper.x = KEEPER_START.x + (keeperZone.x - KEEPER_START.x) * kp;
+  keeper.y = KEEPER_START.y + (keeperZone.y - KEEPER_START.y) * kp;
 
   const direction = { left: -1, centre: 0, right: 1 }[keeperZone.horizontal];
   keeper.angle = direction * (Math.PI / 3) * kp;
@@ -189,29 +296,16 @@ function animate() {
   }
 }
 
-function resetShot() {
-  ball.x = START.x;
-  ball.y = START.y;
-  ball.radius = START.radius;
-
-  keeper.x = KEEPER_START.x;
-  keeper.y = KEEPER_START.y;
-  keeper.angle = 0;
-  keeperZone = null;
-  keeperTarget = null;
-
-  target = null;
-  result = null;
-  progress = 0;
-  state = "aiming";
-  message.textContent = "Click inside the goal to shoot";
-  drawScene();
-}
-
 // ---------- Input ----------
 
 canvas.addEventListener("click", (event) => {
-  if (state !== "aiming") return;
+  // Play again after the match ends
+  if (state === "gameover") {
+    restartGame();
+    return;
+  }
+
+  if (state !== "aiming" && state !== "defending") return;
 
   const rect = canvas.getBoundingClientRect();
   const x = (event.clientX - rect.left) * (canvas.width / rect.width);
@@ -222,18 +316,22 @@ canvas.addEventListener("click", (event) => {
     y >= goal.y && y <= goal.y + goal.height;
 
   if (!insideGoal) {
-    message.textContent = "Click inside the goal to shoot!";
+    message.textContent = "Click inside the goal!";
     return;
   }
 
-  target = { x, y };
-  keeperZone = pickKeeperZone();
-  keeperTarget = { x: keeperZone.x, y: keeperZone.y };
+  if (state === "aiming") {
+    // Player shoots, computer keeper dives randomly
+    target = { x, y };
+    keeperZone = randomZone();
+  } else {
+    // Computer shoots randomly, player picks where the keeper dives
+    target = randomGoalPoint();
+    const picked = getZone(x, y);
+    keeperZone = makeZone(picked.horizontal, picked.vertical);
+  }
 
-  state = "shooting";
-  message.textContent = "Shooting...";
-  requestAnimationFrame(animate);
+  launchShot();
 });
 
-updateScoreboard();
-resetShot();
+restartGame();
