@@ -16,3 +16,8 @@ canvas {
   border-radius: 8px;
   max-width: 100%;
 }
+#scoreboard {
+  font-size: 1.3rem;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
