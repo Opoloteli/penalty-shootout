@@ -30,6 +30,7 @@ let turn = "player";            // whose penalty it is: "player" or "cpu"
 let round = 1;
 const ROUNDS = 5;
 let score = { player: 0, cpu: 0 };
+let taken = { player: 0, cpu: 0 };
 let result = null;              // "GOAL!" or "SAVED!"
 let resultGood = true;          // true if the result is good for the player
 let winner = null;
@@ -200,10 +201,10 @@ function resolveShot() {
     shot.horizontal === keeperZone.horizontal &&
     shot.vertical === keeperZone.vertical;
 
+  taken[turn]++;
   if (!saved) score[turn]++;
 
   result = saved ? "SAVED!" : "GOAL!";
-  // Good for the player if they scored, or if they saved the computer's shot
   resultGood = turn === "player" ? !saved : saved;
 
   const who = turn === "player" ? "You" : "Computer";
@@ -216,18 +217,33 @@ function resolveShot() {
   drawScene();
   setTimeout(nextTurn, 2000);
 }
+// Returns true if the match is already decided
+function isMatchDecided() {
+  // Sudden death: only decided once both have taken the same number of kicks
+  if (taken.player > ROUNDS || taken.cpu > ROUNDS || (taken.player === ROUNDS && taken.cpu === ROUNDS)) {
+    return taken.player === taken.cpu && score.player !== score.cpu;
+  }
 
+  // Regulation: can the trailing side still catch up?
+  const playerLeft = ROUNDS - taken.player;
+  const cpuLeft = ROUNDS - taken.cpu;
+
+  if (score.player > score.cpu + cpuLeft) return true;  // computer can't catch up
+  if (score.cpu > score.player + playerLeft) return true; // you can't catch up
+  return false;
+}
 function nextTurn() {
   resetPositions();
+
+  // Check after EVERY penalty whether the match is over
+  if (isMatchDecided()) {
+    endGame();
+    return;
+  }
 
   if (turn === "player") {
     turn = "cpu";
   } else {
-    // Both teams have taken a penalty: round complete
-    if (round >= ROUNDS && score.player !== score.cpu) {
-      endGame();
-      return;
-    }
     round++;
     turn = "player";
   }
@@ -243,6 +259,7 @@ function endGame() {
 
 function restartGame() {
   score = { player: 0, cpu: 0 };
+  taken = { player: 0, cpu: 0 };
   round = 1;
   turn = "player";
   winner = null;
